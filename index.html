@@ -3,68 +3,122 @@
 <head>
   <meta charset="utf-8" />
   <title>WebRTC — تبادل يدوي</title>
+  <style>
+    body { font-family: system-ui, Arial; background:#0f172a; color:#e5e7eb; margin:0; padding:20px; }
+    h2 { margin-bottom:10px; }
+    .card { background:#1f2937; border-radius:14px; padding:14px; margin-bottom:16px; box-shadow:0 4px 12px rgba(0,0,0,0.3); }
+    textarea { width:100%; min-height:120px; background:#111827; color:#e5e7eb; border:none; border-radius:10px; padding:10px; font-family: monospace; }
+    button { padding:10px 12px; border:none; border-radius:10px; cursor:pointer; margin:4px 0; font-weight:bold; }
+    button.primary { background:#22c55e; color:#062d1d; }
+    button.secondary { background:#3b82f6; color:#051c35; }
+    button.copy { background:#f59e0b; color:#3b2503; }
+    .chat { height:200px; overflow:auto; background:#111827; padding:10px; border-radius:10px; margin-top:10px; }
+    .msg { margin:6px 0; padding:8px; border-radius:10px; background:#374151; max-width:70%; }
+    .me { background:#16a34a; color:#062d1d; margin-left:auto; }
+    audio { width:100%; margin-top:10px; }
+    .qr { margin-top:10px; text-align:center; }
+  </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
   <h2>محادثة WebRTC — تبادل يدوي</h2>
 
-  <button id="startOffer">بدء الاتصال (إنشاء Offer)</button>
-  <textarea id="localOffer" readonly></textarea>
-  <div id="offerQR"></div>
+  <div class="card">
+    <button id="startOffer" class="primary">بدء الاتصال (إنشاء Offer)</button>
+    <button id="copyOffer" class="copy">نسخ Offer</button>
+    <textarea id="localOffer" readonly></textarea>
+    <div id="offerQR" class="qr"></div>
+  </div>
 
-  <textarea id="remoteOffer" placeholder="ألصق هنا الـ Offer"></textarea>
-  <button id="makeAnswer">إنشاء Answer</button>
-  <textarea id="localAnswer" readonly></textarea>
-  <div id="answerQR"></div>
+  <div class="card">
+    <textarea id="remoteOffer" placeholder="ألصق هنا الـ Offer من الطرف الآخر"></textarea>
+    <button id="makeAnswer" class="secondary">إنشاء Answer</button>
+    <button id="copyAnswer" class="copy">نسخ Answer</button>
+    <textarea id="localAnswer" readonly></textarea>
+    <div id="answerQR" class="qr"></div>
+  </div>
 
-  <textarea id="remoteAnswer" placeholder="ألصق هنا الـ Answer"></textarea>
-  <button id="applyAnswer">تطبيق Answer</button>
-  <audio id="remoteAudio" autoplay></audio>
+  <div class="card">
+    <textarea id="remoteAnswer" placeholder="ألصق هنا الـ Answer من الطرف الآخر"></textarea>
+    <button id="applyAnswer" class="primary">تطبيق Answer</button>
+    <audio id="remoteAudio" autoplay></audio>
+  </div>
+
+  <div class="card">
+    <div class="chat" id="chat"></div>
+    <input id="text" placeholder="اكتب رسالة..." />
+    <button id="send" class="secondary">إرسال</button>
+  </div>
 
   <script>
     let pc, dataChannel, micStream;
-    const localOfferEl = document.getElementById("localOffer");
-    const localAnswerEl = document.getElementById("localAnswer");
-    const remoteOfferEl = document.getElementById("remoteOffer");
-    const remoteAnswerEl = document.getElementById("remoteAnswer");
-    const remoteAudio = document.getElementById("remoteAudio");
+    const localOfferEl=document.getElementById("localOffer");
+    const localAnswerEl=document.getElementById("localAnswer");
+    const remoteOfferEl=document.getElementById("remoteOffer");
+    const remoteAnswerEl=document.getElementById("remoteAnswer");
+    const remoteAudio=document.getElementById("remoteAudio");
+    const chatEl=document.getElementById("chat");
 
-    document.getElementById("startOffer").onclick = async () => {
-      pc = new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
-      micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    function addMsg(text,mine){
+      const div=document.createElement("div");
+      div.className="msg"+(mine?" me":"");
+      div.textContent=text;
+      chatEl.appendChild(div);
+      chatEl.scrollTop=chatEl.scrollHeight;
+    }
+
+    function bindDataChannel(){
+      if(!dataChannel) return;
+      dataChannel.onopen=()=>addMsg("✅ القناة النصية مفتوحة",false);
+      dataChannel.onmessage=e=>addMsg(e.data,false);
+    }
+
+    document.getElementById("startOffer").onclick=async()=>{
+      pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
+      pc.ontrack=e=>remoteAudio.srcObject=e.streams[0];
+      pc.ondatachannel=e=>{dataChannel=e.channel;bindDataChannel();};
+      micStream=await navigator.mediaDevices.getUserMedia({audio:true});
       micStream.getTracks().forEach(t=>pc.addTrack(t,micStream));
-      const offer = await pc.createOffer();
+      dataChannel=pc.createDataChannel("chat");
+      bindDataChannel();
+      const offer=await pc.createOffer();
       await pc.setLocalDescription(offer);
-      localOfferEl.value = JSON.stringify(pc.localDescription);
-      document.getElementById("offerQR").innerHTML = ""; // امسح القديم
-      new QRCode(document.getElementById("offerQR"), {
-        text: localOfferEl.value,
-        width: 200,
-        height: 200
-      });
+      localOfferEl.value=JSON.stringify(pc.localDescription);
+      document.getElementById("offerQR").innerHTML="";
+      new QRCode(document.getElementById("offerQR"),{text:localOfferEl.value,width:200,height:200});
     };
 
-    document.getElementById("makeAnswer").onclick = async () => {
-      pc = new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
-      micStream = await navigator.mediaDevices.getUserMedia({audio:true});
+    document.getElementById("makeAnswer").onclick=async()=>{
+      pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
+      pc.ontrack=e=>remoteAudio.srcObject=e.streams[0];
+      pc.ondatachannel=e=>{dataChannel=e.channel;bindDataChannel();};
+      micStream=await navigator.mediaDevices.getUserMedia({audio:true});
       micStream.getTracks().forEach(t=>pc.addTrack(t,micStream));
-      const offerDesc = JSON.parse(remoteOfferEl.value);
+      const offerDesc=JSON.parse(remoteOfferEl.value);
       await pc.setRemoteDescription(offerDesc);
-      const answer = await pc.createAnswer();
+      const answer=await pc.createAnswer();
       await pc.setLocalDescription(answer);
-      localAnswerEl.value = JSON.stringify(pc.localDescription);
-      document.getElementById("answerQR").innerHTML = ""; // امسح القديم
-      new QRCode(document.getElementById("answerQR"), {
-        text: localAnswerEl.value,
-        width: 200,
-        height: 200
-      });
+      localAnswerEl.value=JSON.stringify(pc.localDescription);
+      document.getElementById("answerQR").innerHTML="";
+      new QRCode(document.getElementById("answerQR"),{text:localAnswerEl.value,width:200,height:200});
     };
 
-    document.getElementById("applyAnswer").onclick = async () => {
-      const answerDesc = JSON.parse(remoteAnswerEl.value);
+    document.getElementById("applyAnswer").onclick=async()=>{
+      const answerDesc=JSON.parse(remoteAnswerEl.value);
       await pc.setRemoteDescription(answerDesc);
     };
+
+    document.getElementById("send").onclick=()=>{
+      const text=document.getElementById("text").value.trim();
+      if(text && dataChannel && dataChannel.readyState==="open"){
+        dataChannel.send(text);
+        addMsg(text,true);
+        document.getElementById("text").value="";
+      }
+    };
+
+    document.getElementById("copyOffer").onclick=()=>navigator.clipboard.writeText(localOfferEl.value);
+    document.getElementById("copyAnswer").onclick=()=>navigator.clipboard.writeText(localAnswerEl.value);
   </script>
 </body>
 </html>
