@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <title>غرفة محادثة صوتية + نصية (بواجهة محسّنة)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: system-ui, Segoe UI, Arial; background: #0f172a; color: #e5e7eb; margin: 0; }
+    .wrap { max-width: 900px; margin: 20px auto; padding: 16px; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .brand { font-weight: 800; letter-spacing: 0.5px; }
+    .card { background: #0b1220; padding: 14px; border-radius: 14px; margin-bottom: 12px; box-shadow: 0 6px 24px rgba(0,0,0,0.25); }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    input, button { padding: 10px; border: none; border-radius: 10px; }
+    input { flex: 1; background: #111827; color: #e5e7eb; }
+    button { background: #22c55e; color: #062d1d; font-weight: 700; cursor: pointer; }
+    button.secondary { background: #3b82f6; color: #051c35; }
+    button.warn { background: #f59e0b; color: #3b2503; }
+    button.ghost { background: transparent; border: 1px solid #374151; color: #e5e7eb; }
+    .status { font-size: 13px; color: #94a3b8; white-space: pre-wrap; }
+    .notice { font-size: 14px; color: #a7f3d0; }
+    .error { color: #fca5a5; }
+    .pill { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #1f2937; margin: 4px 0; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } }
+    .chat { height: 220px; overflow: auto; background: #111827; padding: 10px; border-radius: 10px; }
+    .msg { margin: 6px 0; padding: 8px 10px; border-radius: 10px; background: #1f2937; max-width: 75%; }
+    .me { background: #16a34a; color: #062d1d; margin-left: auto; }
+    audio { width: 100%; margin-top: 8px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .codeBox { background: #0b1220; border: 1px dashed #374151; padding: 10px; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="header">
+      <div class="brand">غرفة محادثة — صوت + نص</div>
+      <div class="pill" id="netBadge">جاهز</div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <input id="server" placeholder="رابط سيرفر الإشارات (مثال: ws://192.168.1.10:8080)" />
+      </div>
+      <div class="grid">
+        <div>
+          <div class="row">
+            <input id="room" placeholder="كود الغرفة (مثلاً 4829)" />
+            <button id="generate" class="secondary">إنشاء كود</button>
+          </div>
+          <div class="row">
+            <button id="connect">اتصل</button>
+            <button id="mute" class="ghost">كتم/إلغاء كتم</button>
+            <button id="hangup" class="warn">إنهاء</button>
+          </div>
+          <div class="status" id="status">الحالة: جاهز</div>
+          <div class="notice" id="notice"></div>
+          <div class="status">نصيحة: شغّل سيرفر الإشارات على جهاز يمكن الوصول له، ثم اكتب عنوانه هنا.</div>
+        </div>
+        <div>
+          <div class="codeBox mono">
+            <div>كود الغرفة الحالي:</div>
+            <div id="roomEcho" style="font-size: 20px; margin-top: 6px;">—</div>
+          </div>
+          <audio id="remoteAudio" autoplay></audio>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div class="status">الدردشة النصية (تعمل بعد اتصال WebRTC):</div>
+        <div class="pill" id="dcBadge">القناة النصية: غير مفتوحة</div>
+      </div>
+      <div class="chat" id="chat"></div>
+      <div class="row">
+        <input id="text" placeholder="اكتب رسالة..." />
+        <button id="send">إرسال</button>
+      </div>
+    </div>
+
+    <div class="status mono" id="log"></div>
+  </div>
+
+  <script>
+    // عناصر الواجهة
+    const statusEl = document.getElementById("status");
+    const noticeEl = document.getElementById("notice");
+    const netBadgeEl = document.getElementById("netBadge");
+    const dcBadgeEl = document.getElementById("dcBadge");
+    const remoteAudio = document.getElementById("remoteAudio");
+    const chatEl = document.getElementById("chat");
+    const roomInput = document.getElementById("room");
+    const roomEcho = document.getElementById("roomEcho");
+    const logEl = document.getElementById("log");
+
+    // حالة الاتصال
+    let ws = null, pc = null, dataChannel = null, micStream = null;
+    let joinedOnce = false;
+
+    const setStatus = s => statusEl.textContent = "الحالة: " + s;
+    const setNotice = s => noticeEl.textContent = s || "";
+    const log = (...a) => { logEl.textContent = [logEl.textContent, a.join(" ")].filter(Boolean).join("\n"); console.log(...a); };
+    const setBadge = (el, text, kind="neutral") => {
+      el.textContent = text;
+      if (kind === "good") { el.style.background = "#0f3a2f"; el.style.color = "#a7f3d0"; }
+      else if (kind === "bad") { el.style.background = "#451a1a"; el.style.color = "#fca5a5"; }
+      else { el.style.background = "#1f2937"; el.style.color = "#e5e7eb"; }
+    };
+
+    // توليد كود محلي دائمًا (بدون اعتماد على السيرفر)
+    document.getElementById("generate").onclick = () => {
+      const code = Math.floor(100000 + Math.random() * 900000).toString().slice(0, 6); // 6 أرقام لسهولة القراءة
+      roomInput.value = code;
+      roomEcho.textContent = code;
+      setStatus("تم إنشاء كود الغرفة: " + code);
+      setNotice("شارك هذا الكود مع الطرف الآخر.");
+    };
+
+    // اتصال كامل (سيرفر إشارات + WebRTC)
+    document.getElementById("connect").onclick = async () => {
+      const serverUrl = (document.getElementById("server").value || "").trim();
+      const room = (roomInput.value || "").trim();
+      roomEcho.textContent = room || "—";
+
+      if (!room) return alert("أدخل كود الغرفة");
+      if (!serverUrl) return alert("أدخل رابط سيرفر الإشارات (مثال: ws://192.168.1.10:8080)");
+
+      // افتح WebSocket
+      try {
+        ws = new WebSocket(serverUrl);
+      } catch (err) {
+        setStatus("تعذر إنشاء اتصال بالسيرفر");
+        setBadge(netBadgeEl, "خطأ اتصال", "bad");
+        return;
+      }
+
+      // تأسيس WebRTC مبكرًا (قبل onopen) لتقليل زمن الانتظار
+      pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+
+      pc.onicecandidate = e => {
+        if (e.candidate) {
+          ws?.readyState === 1 && ws.send(JSON.stringify({ type: "signal", room, payload: { candidate: e.candidate } }));
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        const st = pc.iceConnectionState;
+        log("ice:", st);
+        if (st === "connected" || st === "completed") { setStatus("متصل ✅"); setBadge(netBadgeEl, "تم الاتصال", "good"); }
+        else if (st === "failed") { setStatus("فشل الاتصال ❌ — جرّب شبكة أخرى أو TURN"); setBadge(netBadgeEl, "فشل ICE", "bad"); }
+        else if (st === "disconnected") { setStatus("انقطع الاتصال ⚠️"); setBadge(netBadgeEl, "منقطع", "bad"); }
+        else if (st === "checking") { setStatus("جارٍ التحقق من المسارات…"); setBadge(netBadgeEl, "جارٍ التحقق", "neutral"); }
+      };
+
+      pc.ontrack = e => {
+        remoteAudio.srcObject = e.streams[0];
+        setStatus("تم استقبال الصوت");
+      };
+
+      pc.ondatachannel = e => {
+        dataChannel = e.channel;
+        bindDataChannel();
+      };
+
+      // ميكروفون
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStream.getTracks().forEach(t => pc.addTrack(t, micStream));
+      } catch (err) {
+        setStatus("تعذر الوصول للميكروفون — امنح الإذن"); return;
+      }
+
+      // قناة نصية (هذا الطرف يصبح مُنشئ إن لم توجد قناة)
+      if (!dataChannel) {
+        dataChannel = pc.createDataChannel("chat");
+        bindDataChannel();
+      }
+
+      // WebSocket أحداث
+      ws.onopen = async () => {
+        setStatus("تم الاتصال بسيرفر الإشارات");
+        setBadge(netBadgeEl, "متصل بالسيرفر", "good");
+        ws.send(JSON.stringify({ type: "join", code: room })); // نحاول الانضمام أو إنشاء تلقائيًا في السيرفر الحالي
+        // أرسل Offer كبداية
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        ws.send(JSON.stringify({ type: "signal", room, payload: { desc: pc.localDescription } }));
+      };
+
+      ws.onclose = () => { setStatus("انقطع اتصال الإشارات"); setBadge(netBadgeEl, "انقطع السيرفر", "bad"); };
+      ws.onerror = () => { setStatus("خطأ في اتصال الإشارات"); setBadge(netBadgeEl, "خطأ السيرفر", "bad"); };
+
+      ws.onmessage = async (evt) => {
+        let data = {};
+        try { data = JSON.parse(evt.data); } catch { return; }
+
+        // إشعار انضمام الطرف الآخر
+        if (data.type === "joined" || data.type === "joinedNotice") {
+          if (!joinedOnce) {
+            setNotice("✅ طرف آخر انضم للجلسة");
+            joinedOnce = true;
+          }
+        }
+
+        if (data.type === "error") {
+          setStatus("خطأ: " + (data.msg || "كود غير صحيح"));
+          setBadge(netBadgeEl, "خطأ بالغرفة", "bad");
+        }
+
+        if (data.type === "signal") {
+          const payload = data.payload || {};
+          // أوصاف SDP
+          if (payload.desc) {
+            const desc = payload.desc;
+            await pc.setRemoteDescription(desc);
+            if (desc.type === "offer") {
+              const answer = await pc.createAnswer();
+              await pc.setLocalDescription(answer);
+              ws.send(JSON.stringify({ type: "signal", room, payload: { desc: pc.localDescription } }));
+            }
+          }
+          // مرشحات ICE
+          else if (payload.candidate) {
+            try { await pc.addIceCandidate(payload.candidate); } catch (e) { log("addIceCandidate error", e); }
+          }
+        }
+      };
+    };
+
+    function bindDataChannel(){
+      dataChannel.onopen = () => { setBadge(dcBadgeEl, "القناة النصية: مفتوحة", "good"); setStatus("القناة النصية مفتوحة"); };
+      dataChannel.onclose = () => { setBadge(dcBadgeEl, "القناة النصية: مغلقة", "bad"); };
+      dataChannel.onmessage = e => addMsg(e.data, false);
+    }
+
+    document.getElementById("send").onclick = () => {
+      const box = document.getElementById("text");
+      const text = box.value.trim();
+      if (!text) return;
+      if (!dataChannel || dataChannel.readyState !== "open") { alert("القناة النصية ليست مفتوحة بعد"); return; }
+      dataChannel.send(text);
+      addMsg(text, true);
+      box.value = "";
+    };
+
+    function addMsg(text, mine){
+      const div = document.createElement("div");
+      div.className = "msg" + (mine ? " me" : "");
+      div.textContent = text;
+      chatEl.appendChild(div);
+      chatEl.scrollTop = chatEl.scrollHeight;
+    }
+
+    document.getElementById("mute").onclick = () => {
+      if (!micStream) return;
+      micStream.getAudioTracks().forEach(t => t.enabled = !t.enabled);
+      setStatus(micStream.getAudioTracks()[0].enabled ? "الميكروفون يعمل" : "الميكروفون مكتوم");
+    };
+
+    document.getElementById("hangup").onclick = () => {
+      try { pc?.getTransceivers()?.forEach(tr => tr.stop?.()); } catch {}
+      try { pc?.close(); } catch {}
+      try { ws?.close(); } catch {}
+      setStatus("تم إنهاء الاتصال");
+      setNotice("");
+      setBadge(netBadgeEl, "جاهز", "neutral");
+      setBadge(dcBadgeEl, "القناة النصية: غير مفتوحة", "neutral");
+    };
+  </script>
+</body>
+              </html>
