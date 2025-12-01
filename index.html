@@ -84,6 +84,7 @@
       const offer=await pc.createOffer();
       await pc.setLocalDescription(offer);
       localOfferEl.value=JSON.stringify(pc.localDescription);
+      document.getElementById("offerQR").innerHTML="";
       new QRCode(document.getElementById("offerQR"),{text:localOfferEl.value,width:200,height:200});
     };
 
@@ -98,6 +99,7 @@
       const answer=await pc.createAnswer();
       await pc.setLocalDescription(answer);
       localAnswerEl.value=JSON.stringify(pc.localDescription);
+      document.getElementById("answerQR").innerHTML="";
       new QRCode(document.getElementById("answerQR"),{text:localAnswerEl.value,width:200,height:200});
     };
 
