@@ -15,7 +15,6 @@ wss.on("connection", (ws) => {
 
     if (msg.type === "join") {
       code = msg.code;
-      if (!code) { ws.send(JSON.stringify({ type: "error", msg: "لا يوجد كود غرفة" })); return; }
       if (!rooms.has(code)) rooms.set(code, new Set());
       rooms.get(code).add(ws);
       ws.send(JSON.stringify({ type: "joined", code }));
@@ -41,4 +40,4 @@ wss.on("connection", (ws) => {
   });
 });
 
-server.listen(8080, () => console.log("Signaling server on ws://0.0.0.0:8080"));
+server.listen(8080, () => console.log("Signaling server running on ws://0.0.0.0:8080"));
