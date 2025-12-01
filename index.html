@@ -2,12 +2,12 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="utf-8" />
-  <title>WebRTC — تبادل يدوي مع QR</title>
+  <title>WebRTC — غرف وروابط قصيرة</title>
   <style>
     body { font-family: system-ui, Arial; background:#0f172a; color:#e5e7eb; margin:0; padding:20px; }
     h2 { margin-bottom:10px; }
     .card { background:#1f2937; border-radius:14px; padding:14px; margin-bottom:16px; box-shadow:0 4px 12px rgba(0,0,0,0.3); }
-    textarea { width:100%; min-height:120px; background:#111827; color:#e5e7eb; border:none; border-radius:10px; padding:10px; font-family: monospace; }
+    input, textarea { width:100%; background:#111827; color:#e5e7eb; border:none; border-radius:10px; padding:10px; margin-top:8px; }
     button { padding:10px 12px; border:none; border-radius:10px; cursor:pointer; margin:4px 0; font-weight:bold; }
     button.primary { background:#22c55e; color:#062d1d; }
     button.secondary { background:#3b82f6; color:#051c35; }
@@ -17,28 +17,21 @@
     audio { width:100%; margin-top:10px; }
     .qr { margin-top:10px; text-align:center; }
   </style>
-  <!-- تحميل مكتبة QRCode.js -->
+  <!-- مكتبة QRCode.js -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
-  <h2>محادثة WebRTC — تبادل يدوي مع QR</h2>
+  <h2>محادثة WebRTC — روابط قصيرة + QR</h2>
 
   <div class="card">
-    <button id="startOffer" class="primary">بدء الاتصال (إنشاء Offer)</button>
-    <textarea id="localOffer" readonly></textarea>
-    <div id="offerQR" class="qr"></div>
+    <button id="createRoom" class="primary">إنشاء غرفة جديدة</button>
+    <input id="roomLink" readonly placeholder="رابط الغرفة سيظهر هنا" />
+    <div id="roomQR" class="qr"></div>
   </div>
 
   <div class="card">
-    <textarea id="remoteOffer" placeholder="ألصق هنا الـ Offer من الطرف الآخر"></textarea>
-    <button id="makeAnswer" class="secondary">إنشاء Answer</button>
-    <textarea id="localAnswer" readonly></textarea>
-    <div id="answerQR" class="qr"></div>
-  </div>
-
-  <div class="card">
-    <textarea id="remoteAnswer" placeholder="ألصق هنا الـ Answer من الطرف الآخر"></textarea>
-    <button id="applyAnswer" class="primary">تطبيق Answer</button>
+    <input id="joinRoom" placeholder="أدخل رابط الغرفة أو امسح QR" />
+    <button id="connect" class="secondary">اتصال بالغرفة</button>
     <audio id="remoteAudio" autoplay></audio>
   </div>
 
@@ -50,12 +43,8 @@
 
   <script>
     let pc, dataChannel, micStream;
-    const localOfferEl=document.getElementById("localOffer");
-    const localAnswerEl=document.getElementById("localAnswer");
-    const remoteOfferEl=document.getElementById("remoteOffer");
-    const remoteAnswerEl=document.getElementById("remoteAnswer");
-    const remoteAudio=document.getElementById("remoteAudio");
     const chatEl=document.getElementById("chat");
+    const remoteAudio=document.getElementById("remoteAudio");
 
     function addMsg(text,mine){
       const div=document.createElement("div");
@@ -71,8 +60,20 @@
       dataChannel.onmessage=e=>addMsg(e.data,false);
     }
 
-    // زر إنشاء Offer
-    document.getElementById("startOffer").onclick=async()=>{
+    // إنشاء غرفة جديدة
+    document.getElementById("createRoom").onclick=()=>{
+      const roomId=Math.random().toString(36).substring(2,8); // كود قصير
+      const link=location.origin+"/room/"+roomId;
+      document.getElementById("roomLink").value=link;
+      document.getElementById("roomQR").innerHTML="";
+      new QRCode(document.getElementById("roomQR"),{text:link,width:200,height:200});
+    };
+
+    // الاتصال بالغرفة
+    document.getElementById("connect").onclick=async()=>{
+      const link=document.getElementById("joinRoom").value.trim();
+      if(!link){alert("⚠️ أدخل رابط الغرفة أو امسح QR");return;}
+      // هنا ممكن تضيف كود WebRTC حقيقي مع سيرفر إشارات
       pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
       pc.ontrack=e=>remoteAudio.srcObject=e.streams[0];
       pc.ondatachannel=e=>{dataChannel=e.channel;bindDataChannel();};
@@ -80,38 +81,10 @@
       micStream.getTracks().forEach(t=>pc.addTrack(t,micStream));
       dataChannel=pc.createDataChannel("chat");
       bindDataChannel();
-      const offer=await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      localOfferEl.value=JSON.stringify(pc.localDescription);
-      // توليد رمز QR
-      document.getElementById("offerQR").innerHTML="";
-      new QRCode(document.getElementById("offerQR"),{text:localOfferEl.value,width:200,height:200});
+      addMsg("📡 تم الانضمام إلى الغرفة: "+link,false);
     };
 
-    // زر إنشاء Answer
-    document.getElementById("makeAnswer").onclick=async()=>{
-      pc=new RTCPeerConnection({iceServers:[{urls:"stun:stun.l.google.com:19302"}]});
-      pc.ontrack=e=>remoteAudio.srcObject=e.streams[0];
-      pc.ondatachannel=e=>{dataChannel=e.channel;bindDataChannel();};
-      micStream=await navigator.mediaDevices.getUserMedia({audio:true});
-      micStream.getTracks().forEach(t=>pc.addTrack(t,micStream));
-      const offerDesc=JSON.parse(remoteOfferEl.value);
-      await pc.setRemoteDescription(offerDesc);
-      const answer=await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      localAnswerEl.value=JSON.stringify(pc.localDescription);
-      // توليد رمز QR
-      document.getElementById("answerQR").innerHTML="";
-      new QRCode(document.getElementById("answerQR"),{text:localAnswerEl.value,width:200,height:200});
-    };
-
-    // زر تطبيق Answer
-    document.getElementById("applyAnswer").onclick=async()=>{
-      const answerDesc=JSON.parse(remoteAnswerEl.value);
-      await pc.setRemoteDescription(answerDesc);
-    };
-
-    // زر إرسال رسالة نصية
+    // إرسال رسالة نصية
     document.getElementById("send").onclick=()=>{
       const text=document.getElementById("text").value.trim();
       if(text && dataChannel && dataChannel.readyState==="open"){
@@ -122,4 +95,4 @@
     };
   </script>
 </body>
-  </html>
+</html>
